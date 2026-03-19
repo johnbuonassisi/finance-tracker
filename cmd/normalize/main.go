@@ -22,6 +22,12 @@ var (
 		"05920-5083274":    "RBC Savings",
 		"4514011614694030": "RBC Visa",
 	}
+	outputHeader = []string{
+		"Account",
+		"Date",
+		"Description",
+		"Amount",
+	}
 )
 
 func main() {
@@ -62,6 +68,10 @@ func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
 
 		if i == 0 {
 			// skip the first line of headers
+			err = writer.Write(outputHeader)
+			if err != nil {
+				return err
+			}
 			continue
 		}
 

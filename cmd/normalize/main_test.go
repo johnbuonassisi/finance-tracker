@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"testing"
 
@@ -9,12 +10,17 @@ import (
 )
 
 func TestRun(t *testing.T) {
-	file, err := os.Open("testdata/csv18320.csv")
+	inputFile, err := os.Open("testdata/rbc_txns_input.csv")
+	require.NoError(t, err)
+
+	outputFile, err := os.Open("testdata/rbc_txns_output.csv")
 	require.NoError(t, err)
 
 	buffer := new(bytes.Buffer)
-	err = run(t.Context(), file, buffer, t.Output())
+	err = run(t.Context(), inputFile, buffer, t.Output())
 	require.NoError(t, err)
 
-	t.Logf("buffer %s", buffer.String())
+	expectedOutput, err := io.ReadAll(outputFile)
+	require.NoError(t, err)
+	require.Equal(t, string(expectedOutput), buffer.String())
 }
