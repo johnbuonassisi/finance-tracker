@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/csv"
 	"errors"
 	"flag"
@@ -23,6 +24,7 @@ var (
 		"4514011614694030": "RBC Visa",
 	}
 	outputHeader = []string{
+		"ID",
 		"Account",
 		"Date",
 		"Description",
@@ -179,6 +181,7 @@ var (
 )
 
 type OutputTxn struct {
+	ID          string
 	Account     string
 	Date        time.Time
 	Description string
@@ -187,7 +190,10 @@ type OutputTxn struct {
 }
 
 func (o *OutputTxn) Record() []string {
+	hashID := fmt.Sprintf("%s-%s-%s-%s", o.Account, o.Date, o.Description, o.Amount)
+	hashBytes := sha1.Sum([]byte(hashID))
 	return []string{
+		fmt.Sprintf("%x", hashBytes),
 		o.Account,
 		o.Date.Format("1/2/2006"),
 		strings.Trim(o.Description, " "),
