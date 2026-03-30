@@ -115,12 +115,15 @@ func convert(in InputTxn) (*OutputTxn, error) {
 	out.Date = date
 
 	// default to description 2, fallback to description 1
-	desc := in.Description2()
-	if desc == "" {
+	desc := "NO DESCRIPTION"
+	if strings.ToLower(in.AccountType()) == "visa" {
+		// for visa accounts just grab the merchant in the first description, second
+		// is always empty
 		desc = in.Description1()
-	}
-	if desc == "" {
-		desc = "NOT SPECIFIED"
+	} else {
+		// for other accounts graph both descriptions as one will contain the txn type and
+		// the other the merchant. Sometimes the type/merchant are swapped so just concat both.
+		desc = fmt.Sprintf("%s %s", in.Description1(), in.Description2())
 	}
 	out.Description = desc
 
@@ -190,7 +193,7 @@ type OutputTxn struct {
 }
 
 func (o *OutputTxn) Record() []string {
-	hashID := fmt.Sprintf("%s-%s-%s-%s", o.Account, o.Date, o.Description, o.Amount)
+	hashID := fmt.Sprintf("%s-%s-%s-%.2f", o.Account, o.Date, o.Description, o.Amount)
 	hashBytes := sha1.Sum([]byte(hashID))
 	return []string{
 		fmt.Sprintf("%x", hashBytes),
@@ -221,11 +224,11 @@ func (i InputTxn) Date() string {
 }
 
 func (i InputTxn) Description1() string {
-	return i[3]
+	return i[4]
 }
 
 func (i InputTxn) Description2() string {
-	return i[4]
+	return i[5]
 }
 
 func (i InputTxn) CAD() string {
