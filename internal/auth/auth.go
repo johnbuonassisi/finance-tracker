@@ -15,6 +15,11 @@ const (
 	credentialFilePath = "/Users/john/.config/gcloud/finance-tracker-credentials.json"
 )
 
+// NewDefaultclient uses the hardcoded constant for the credFilePath when calling NewClient
+func NewDefaultClient() (*http.Client, error) {
+	return NewClient("")
+}
+
 // NewClient returns a new http client for google sheets
 func NewClient(credFilePath string) (*http.Client, error) {
 	if credFilePath == "" {
