@@ -2,33 +2,19 @@ package main
 
 import (
 	"context"
-	"crypto/sha1"
 	"encoding/csv"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"strconv"
 	"strings"
-	"time"
 )
 
 var (
-	inputFile  = flag.String("in", "", "input csv file")
-	outputFile = flag.String("out", "", "output csv file")
-	accounts   = map[string]string{
-		"05920-5031885":    "RBC Chequing",
-		"05920-5083274":    "RBC Savings",
-		"4514011614694030": "RBC Visa",
-	}
-	outputHeader = []string{
-		"ID",
-		"Account",
-		"Date",
-		"Description",
-		"Amount",
+	parsers = []Parser{
+		&rbcParser{},
+		&scotiaParser{},
 	}
 )
 
@@ -40,19 +26,35 @@ func main() {
 	}
 }
 
-func logRecord(logger *slog.Logger, i int, record []string) {
-	recordStr := strings.Join(record, ",")
-	logger.Info(fmt.Sprintf("%d-%s", i, recordStr), "len", len(record))
-}
-
 func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	logger := slog.New(slog.NewTextHandler(stderr, nil))
 
 	reader := csv.NewReader(stdin)
 	reader.FieldsPerRecord = -1 // turn of number of field checking
+
 	writer := csv.NewWriter(stdout)
 	defer writer.Flush()
+
+	err := parse(ctx, logger, reader, writer, parsers)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func parse(ctx context.Context, logger *slog.Logger, reader *csv.Reader, writer *csv.Writer, parsers []Parser) error {
+
+	parser, err := detectParser(reader, parsers)
+	if err != nil {
+		return err
+	}
+
+	err = writer.Write(outputHeader)
+	if err != nil {
+		return err
+	}
 
 	for i := 0; ; i++ {
 		record, err := reader.Read()
@@ -68,28 +70,15 @@ func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
 		}
 		logRecord(logger, i, record)
 
-		if i == 0 {
-			// skip the first line of headers
-			err = writer.Write(outputHeader)
-			if err != nil {
-				return err
-			}
-			continue
-		}
-
-		in, err := NewInputTxn(record)
-		if err != nil {
-			return err
-		}
-
-		out, err := convert(in)
+		out, err := parser.Parse(record)
 		if err != nil {
 			return err
 		}
 		if out == nil {
+			logger.Debug(fmt.Sprintf("skipped record %d", i))
 			continue
 		}
-		logger.Info(fmt.Sprintf("converted record %d:", i), "converted", out)
+		logger.Debug(fmt.Sprintf("converted record %d:", i), "converted", out)
 
 		err = writer.Write(out.Record())
 		if err != nil {
@@ -98,151 +87,25 @@ func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 }
 
-func convert(in InputTxn) (*OutputTxn, error) {
-	out := OutputTxn{}
-
-	// Account = "<Account Name>"
-	accountName, ok := accounts[in.AccountNumber()]
-	if !ok {
-		return nil, nil
-	}
-	out.Account = fmt.Sprintf("%s", accountName)
-
-	date, err := time.Parse("1/2/2006", in.Date())
-	if err != nil {
-		return nil, err
-	}
-	out.Date = date
-
-	// default to description 2, fallback to description 1
-	desc := "NO DESCRIPTION"
-	if strings.ToLower(in.AccountType()) == "visa" {
-		// for visa accounts just grab the merchant in the first description, second
-		// is always empty
-		desc = in.Description1()
-	} else {
-		// for other accounts graph both descriptions as one will contain the txn type and
-		// the other the merchant. Sometimes the type/merchant are swapped so just concat both.
-		desc = fmt.Sprintf("%s %s", in.Description1(), in.Description2())
-	}
-	out.Description = desc
-
-	// Determine currency and transaction amount
-	var (
-		currency Currency
-		amount   float64
-	)
-	if in.CAD() != "" {
-		currency = CurrencyCAD
-		amount, err = in.CADInt()
-		if err != nil {
-			return nil, err
-		}
-	} else if in.USD() != "" {
-		currency = CurrencyUSD
-		amount, err = in.USDInt()
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		return nil, fmt.Errorf("no CAD or USD txn value included")
+func detectParser(reader *csv.Reader, parsers []Parser) (Parser, error) {
+	header, err := reader.Read()
+	if err == io.EOF {
+		return nil, errors.New("no header found")
 	}
 	if err != nil {
 		return nil, err
 	}
-	out.Currency = currency
-	out.Amount = amount
 
-	return &out, nil
-}
-
-func getCAD(in []string) (float64, error) {
-	return strconv.ParseFloat(in[6], 32)
-}
-
-func getUSD(in []string) (float64, error) {
-	return strconv.ParseFloat(in[7], 32)
-}
-
-func getTxn(in InputTxn) (float64, string, error) {
-	cad, err := getCAD(in)
-	if err != nil {
-		usd, err := getUSD(in)
-		if err != nil {
-			return 0, "", fmt.Errorf("no cad/usd transaction value specified")
+	for _, p := range parsers {
+		isMatch := p.MatchHeader(header)
+		if isMatch {
+			return p, nil
 		}
-		return usd, "usd", nil
 	}
-	return cad, "cad", nil
+	return nil, errors.New("no parser found")
 }
 
-type Currency string
-
-var (
-	CurrencyCAD Currency = "cad"
-	CurrencyUSD Currency = "usd"
-)
-
-type OutputTxn struct {
-	ID          string
-	Account     string
-	Date        time.Time
-	Description string
-	Amount      float64
-	Currency    Currency
-}
-
-func (o *OutputTxn) Record() []string {
-	hashID := fmt.Sprintf("%s-%s-%s-%.2f", o.Account, o.Date, o.Description, o.Amount)
-	hashBytes := sha1.Sum([]byte(hashID))
-	return []string{
-		fmt.Sprintf("%x", hashBytes),
-		o.Account,
-		o.Date.Format("1/2/2006"),
-		strings.Trim(o.Description, " "),
-		fmt.Sprintf("%.2f", o.Amount),
-		string(o.Currency),
-	}
-}
-
-type InputTxn []string
-
-func NewInputTxn(record []string) (InputTxn, error) {
-	return InputTxn(record), nil
-}
-
-func (i InputTxn) AccountType() string {
-	return i[0]
-}
-
-func (i InputTxn) AccountNumber() string {
-	return i[1]
-}
-
-func (i InputTxn) Date() string {
-	return i[2]
-}
-
-func (i InputTxn) Description1() string {
-	return i[4]
-}
-
-func (i InputTxn) Description2() string {
-	return i[5]
-}
-
-func (i InputTxn) CAD() string {
-	return i[6]
-}
-
-func (i InputTxn) CADInt() (float64, error) {
-	return strconv.ParseFloat(i.CAD(), 32)
-}
-
-func (i InputTxn) USD() string {
-	return i[7]
-}
-
-func (i InputTxn) USDInt() (float64, error) {
-	return strconv.ParseFloat(i.USD(), 32)
+func logRecord(logger *slog.Logger, i int, record []string) {
+	recordStr := strings.Join(record, ",")
+	logger.Info(fmt.Sprintf("%d-%s", i, recordStr), "len", len(record))
 }
