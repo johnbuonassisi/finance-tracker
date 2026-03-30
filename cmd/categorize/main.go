@@ -50,7 +50,7 @@ const (
 func main() {
 	ctx := context.Background()
 
-	client, err := auth.NewClient("")
+	client, err := auth.NewDefaultClient()
 	if err != nil {
 		log.Fatalf("Unable to create new Sheets client: %v", err)
 	}
@@ -62,7 +62,10 @@ func main() {
 
 	resp, err := srv.Spreadsheets.Values.
 		BatchGet(spreadsheetID).
-		Ranges("Transactions!C2:C", "Transactions!G2:G", "Rules!A2:A", "Rules!B2:B").
+		Ranges(fmt.Sprintf("%s!C2:C", txnSheetName),
+			fmt.Sprintf("%s!G2:G", txnSheetName),
+			"Rules!A2:A",
+			"Rules!B2:B").
 		Do()
 	if err != nil {
 		log.Fatalf("Unable to retrieve data from sheet: %v", err)
@@ -111,7 +114,7 @@ func main() {
 				//fmt.Printf("%s - %s - %s\n", description, keyword, subCategory)
 				if strings.Contains(description, keyword) {
 					data = append(data, &sheets.ValueRange{
-						Range:  fmt.Sprintf("Transactions!G%d", idx+2),
+						Range:  fmt.Sprintf("%s!G%d", txnSheetName, idx+2),
 						Values: [][]any{{fmt.Sprintf("%s", subCategory)}},
 					})
 					wasCategorized = true
