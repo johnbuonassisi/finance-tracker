@@ -23,20 +23,25 @@ func main() {
 }
 
 func register(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	userName := r.FormValue("username")
 	if len(userName) < 8 {
-		w.WriteHeader(http.StatusInternalServerError)
+		http.Error(w, "username is too short", http.StatusUnprocessableEntity)
 		return
 	}
 	password := r.FormValue("password")
 	if len(password) < 8 {
-		w.WriteHeader(http.StatusInternalServerError)
+		http.Error(w, "password is too short", http.StatusUnprocessableEntity)
 		return
 	}
 
 	_, ok := users[userName]
 	if ok {
-		w.WriteHeader(http.StatusUnprocessableEntity)
+		http.Error(w, "username already exists", http.StatusConflict)
 		return
 	}
 
@@ -52,6 +57,8 @@ func register(w http.ResponseWriter, r *http.Request) {
 		Name:           userName,
 		HashedPassword: string(hashedPassword),
 	}
+
+	w.WriteHeader(http.StatusCreated)
 }
 
 func hashPassword(password string) (string, error) {
@@ -65,20 +72,25 @@ func checkPassword(hashedPassword, password string) bool {
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	userName := r.FormValue("username")
 	password := r.FormValue("password")
 
 	// does user exist
 	user, ok := users[userName]
 	if !ok {
-		http.Error(w, "user not found", http.StatusNotFound)
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
 	// does the incoming password match the hashed, stored password
 	isMatch := checkPassword(user.HashedPassword, password)
 	if !isMatch {
-		http.Error(w, "incorrect password", http.StatusUnauthorized)
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
@@ -125,18 +137,24 @@ func protected(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := authorize(r); err != nil {
-		http.Error(w, "not authorized", http.StatusUnauthorized)
+	user, statusCode, err := authorize(r)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
 		return
 	}
 
-	userName := r.FormValue("username")
-	fmt.Fprintf(w, "Authorization check passed! Welcome %s!\n", userName)
+	fmt.Fprintf(w, "Authorization check passed! Welcome %s!\n", user.Name)
 }
 
 func logout(w http.ResponseWriter, r *http.Request) {
-	if err := authorize(r); err != nil {
-		http.Error(w, "not authorized", http.StatusUnauthorized)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user, statusCode, err := authorize(r)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
 		return
 	}
 
@@ -153,38 +171,33 @@ func logout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: false,
 	})
 
-	userName := r.FormValue("username")
-	user, ok := users[userName]
-	if !ok {
-		http.Error(w, "not authorized", http.StatusNotFound)
-	}
 	user.SessionToken = ""
 	user.CSRFToken = ""
 
 	fmt.Fprintln(w, "Logged out successfully!")
 }
 
-func authorize(r *http.Request) error {
+func authorize(r *http.Request) (*User, int, error) {
 	userName := r.FormValue("username")
 	user, ok := users[userName]
 	if !ok {
-		return errors.New("user not found")
+		return nil, http.StatusUnauthorized, errors.New("not authorized")
 	}
 
 	sessionToken, err := r.Cookie("session")
 	if err != nil {
-		return errors.New("session cookie not found")
+		return nil, http.StatusUnauthorized, errors.New("not authorized")
 	}
 	if sessionToken == nil || sessionToken.Value == "" || sessionToken.Value != user.SessionToken {
-		return errors.New("session value token invalid")
+		return nil, http.StatusUnauthorized, errors.New("not authorized")
 	}
 
 	csrfToken := r.Header.Get("csrf")
 	if csrfToken == "" || csrfToken != user.CSRFToken {
-		return errors.New("csrf token invalid")
+		return nil, http.StatusForbidden, errors.New("invalid csrf token")
 	}
 
-	return nil
+	return user, http.StatusOK, nil
 }
 
 func generateToken(length int) (string, error) {
