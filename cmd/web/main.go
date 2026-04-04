@@ -31,6 +31,7 @@ func register(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	if len(password) < 8 {
 		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 
 	_, ok := users[userName]
@@ -38,6 +39,8 @@ func register(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
+
+	log.Printf("getting past here")
 
 	hashedPassword, err := hashPassword(password)
 	if err != nil {
@@ -124,6 +127,7 @@ func protected(w http.ResponseWriter, r *http.Request) {
 
 	if err := authorize(r); err != nil {
 		http.Error(w, "not authorized", http.StatusUnauthorized)
+		return
 	}
 
 	userName := r.FormValue("username")
