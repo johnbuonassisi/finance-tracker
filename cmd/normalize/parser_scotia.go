@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -28,8 +29,11 @@ func (s *scotiaParser) MatchHeader(header []string) bool {
 		return false
 	}
 
+	// strip a BOM found at the beginning of the file
+	header[0] = strings.TrimPrefix(header[0], "\ufeff")
+
 	for idx, headerField := range header {
-		if headerField != scotiaHeader[idx] {
+		if !strings.EqualFold(headerField, scotiaHeader[idx]) {
 			return false
 		}
 	}
