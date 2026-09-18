@@ -121,7 +121,11 @@ func main() {
 				}
 			}
 		}
-		if !wasCategorized {
+		if !wasCategorized && (subCategories.Values == nil || idx >= len(subCategories.Values) || len(subCategories.Values[idx]) == 0) {
+			data = append(data, &sheets.ValueRange{
+				Range:  fmt.Sprintf("%s!G%d", txnSheetName, idx+2),
+				Values: [][]any{{""}},
+			})
 			uncategorizedRows++
 		}
 	}
